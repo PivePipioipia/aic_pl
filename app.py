@@ -50,6 +50,11 @@ else:
 
 LenDictPath = len(DictImagePath)
 
+######## METADATA ########
+with open(config.METADATA_JSON, "r", encoding="utf-8") as f:
+    METADATA = json.load(f)
+
+
 ######## FAISS ########
 device = "cuda" if getattr(config, "USE_GPU", False) else "cpu"
 bin_file = getattr(config, "FAISS_INDEX_BIN", "faiss_normal_ViT.bin")
@@ -77,6 +82,39 @@ def _recompute_query_ids():
     """Đánh lại query_id = 1..N theo thứ tự hiện tại."""
     for idx, r in enumerate(RESULTS, 1):
         r['query_id'] = idx
+
+######## RERANK METADATA ########
+
+import re
+
+def rerank_with_metadata(query, results, metadata, alpha=0.2):
+    """
+    Rerank top-k results bằng OCR, Objects, Place.
+    query: text gốc của người dùng
+    results: list [{'imgpath':..., 'id':..., 'score':...}]
+    metadata: dict key=imgpath, value={'ocr':..., 'objects':..., 'place':...}
+    alpha: trọng số boost cho metadata match
+    """
+    q = query.lower()
+    new_results = []
+    for r in results:
+        info = metadata.get(r['imgpath'], {})
+        bonus = 0.0
+        # Kiểm tra OCR
+        if q in info.get("ocr", "").lower():
+            bonus += alpha
+        # Kiểm tra objects
+        if any(q in obj.lower() for obj in info.get("objects", [])):
+            bonus += alpha
+        # Kiểm tra place
+        if q in info.get("place", "").lower():
+            bonus += alpha
+
+        r['score'] = r.get('score', 1.0) + bonus
+        new_results.append(r)
+
+    # Sắp xếp lại theo score giảm dần
+    return sorted(new_results, key=lambda x: x['score'], reverse=True)
 
 @app.route('/')
 @app.route('/home')
@@ -117,7 +155,20 @@ def text_search():
         return redirect(url_for('home'))
 
     _, list_ids, _, list_image_paths = MyFaiss.text_search(text_query, k=k)
-    pagefile = [{'imgpath': p, 'id': int(i)} for p, i in zip(list_image_paths, list_ids)]
+
+    # Gán score mặc định = 1.0 để có chỗ boost
+    pagefile = []
+    for p, i in zip(list_image_paths, list_ids):
+        video_name, frame_idx = keyframe_to_video_frame(p) or ("unknown", -1)
+        pagefile.append({
+            'imgpath': p,
+            'id': frame_idx,  # giờ id chính là frame_idx thật
+            'score': 1.0
+        })
+
+    # Rerank với metadata
+    pagefile = rerank_with_metadata(text_query, pagefile, METADATA, alpha=0.3)
+
     imgperindex = 100
     data = {
         'num_page': max(1, math.ceil(len(pagefile)/imgperindex)),
@@ -291,8 +342,13 @@ def image_search():
     id_query = int(request.args.get('imgid'))
     _, list_ids, _, list_image_paths = MyFaiss.image_search(id_query, k=50)
     imgperindex = 100
-    for imgpath, id in zip(list_image_paths, list_ids):
-        pagefile.append({'imgpath': imgpath, 'id': int(id)})
+    for imgpath, i in zip(list_image_paths, list_ids):
+        video_name, frame_idx = keyframe_to_video_frame(imgpath) or ("unknown", -1)
+        pagefile.append({
+            'imgpath': imgpath,
+            'id': frame_idx,
+        })
+
     data = {'num_page': max(1, math.ceil(LenDictPath / imgperindex)), 'pagefile': pagefile}
     _recompute_query_ids()
     return render_template('home.html', data=data, results=RESULTS)
@@ -305,7 +361,14 @@ def upload_search():
         return jsonify({'error': 'No image uploaded'}), 400
     pil_img = Image.open(file.stream).convert("RGB")
     _, list_ids, _, list_image_paths = MyFaiss.image_search_from_pil(pil_img, k=k)
-    pagefile = [{'imgpath': p, 'id': int(i)} for p, i in zip(list_image_paths, list_ids)]
+    pagefile = []
+    for p, i in zip(list_image_paths, list_ids):
+        video_name, frame_idx = keyframe_to_video_frame(p) or ("unknown", -1)
+        pagefile.append({
+            'imgpath': p,
+            'id': frame_idx,
+        })
+
     imgperindex = 100
     data = {'num_page': max(1, math.ceil(len(pagefile)/imgperindex)), 'pagefile': pagefile, 'query': '[image]'}
     _recompute_query_ids()
@@ -321,7 +384,14 @@ def sketch_search():
     img_bytes = base64.b64decode(b64)
     pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     _, list_ids, _, list_image_paths = MyFaiss.image_search_from_pil(pil_img, k=k)
-    pagefile = [{'imgpath': p, 'id': int(i)} for p, i in zip(list_image_paths, list_ids)]
+    pagefile = []
+    for p, i in zip(list_image_paths, list_ids):
+        video_name, frame_idx = keyframe_to_video_frame(p) or ("unknown", -1)
+        pagefile.append({
+            'imgpath': p,
+            'id': frame_idx,
+        })
+
     imgperindex = 100
     data = {'num_page': max(1, math.ceil(len(pagefile)/imgperindex)), 'pagefile': pagefile, 'query': '[sketch]'}
     _recompute_query_ids()

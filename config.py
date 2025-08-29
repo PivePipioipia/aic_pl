@@ -5,7 +5,7 @@ DATASET_ROOT = os.getenv("DATASET_ROOT", r"D:\AIC_DATA1_fromKG")
 # Cấu trúc AIC 2025
 KEYFRAMES_DIR = os.path.join(DATASET_ROOT, "frames")
 CLIP_DIR      = os.path.join(DATASET_ROOT, "clip-features")
-MAP_CSV_DIR   = os.path.join(DATASET_ROOT, "map-keyframes")
+#MAP_CSV_DIR   = os.path.join(DATASET_ROOT, "map-keyframes")
 
 # File output cho app
 
@@ -23,3 +23,9 @@ FAISS_NPROBE     = int(os.getenv("FAISS_NPROBE", "16"))
 
 # GPU?  set USE_GPU=1 trước khi chạy để bật GPU nếu có
 USE_GPU = os.getenv("USE_GPU", "0") == "1"
+
+METADATA_JSON = os.path.join(DATASET_ROOT, "metadata.json")
+
+# Folder chứa map frame_idx
+MAP_IDX_DIR = os.path.join(DATASET_ROOT, "map_idx")
+

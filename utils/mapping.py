@@ -1,93 +1,40 @@
-# utils/mapping.py
-from __future__ import annotations
-import os, csv, glob
-from typing import Dict, Tuple, Optional
+import os, json
 import config
 
-# Trả về: dict[str_rel_path] -> (video_name.mp4, frame_idx:int)
-_mapping: Dict[str, Tuple[str, int]] = {}
-_loaded = False
+ALL_MAPS = {}
 
-# Các tên cột có thể gặp trong CSV map
-CAND_COLS_KEYFRAME = ["keyframe", "keyframe_path", "image_path", "rel_path"]
-CAND_COLS_VIDEO    = ["video", "video_id", "video_name", "video_file"]
-CAND_COLS_FRAME    = ["frame", "frame_id", "frame_idx", "frame_index"]
+def load_all_maps():
+    global ALL_MAPS
+    if not os.path.exists(config.MAP_IDX_DIR):
+        print(f"MAP_IDX_DIR không tồn tại: {config.MAP_IDX_DIR}")
+        return {}
 
-def _first_hit(cols, header):
-    for c in cols:
-        if c in header:
-            return c
-    return None
+    for fname in os.listdir(config.MAP_IDX_DIR):
+        if fname.endswith(".json"):
+            fpath = os.path.join(config.MAP_IDX_DIR, fname)
+            with open(fpath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            video_name = fname.replace("map_", "").replace(".json", "")
+            ALL_MAPS[video_name] = data
 
-def _load_from_csv_dir(dir_path: str):
-    global _mapping
-    csv_files = sorted(glob.glob(os.path.join(dir_path, "*.csv")))
-    for f in csv_files:
-        with open(f, newline="", encoding="utf-8") as fh:
-            reader = csv.DictReader(fh)
-            header = [h.strip() for h in reader.fieldnames or []]
-            kcol = _first_hit(CAND_COLS_KEYFRAME, header)
-            vcol = _first_hit(CAND_COLS_VIDEO, header)
-            fcol = _first_hit(CAND_COLS_FRAME, header)
-            if not (kcol and vcol and fcol):
-                # CSV không khớp định dạng kỳ vọng, bỏ qua file này
-                continue
-            for row in reader:
-                key = str(row[kcol]).replace("\\", "/").strip()
-                vid = str(row[vcol]).strip()
-                try:
-                    fidx = int(row[fcol])
-                except:
-                    # nếu không parse được số -> bỏ qua dòng này
-                    continue
-                if key:
-                    _mapping[key] = (vid, fidx)
+    print(f"Loaded {len(ALL_MAPS)} map files từ {config.MAP_IDX_DIR}")
+    return ALL_MAPS
 
-def _fallback_build_from_filename():
+
+def keyframe_to_video_frame(rel_path: str):
     """
-    Nếu không có CSV map: suy luận
-    'L21_V001/0000.jpg' -> ('L21_V001.mp4', frame_idx=0)
+    Input:  'L21_V001/087.jpg'
+    Output: ('L21_V001', 2678)
     """
-    # đọc image_path.json để lấy tất cả rel_paths
-    import json
-    with open(config.IMAGE_MAP_JSON, "r", encoding="utf-8") as f:
-        raw = json.load(f)
-    if isinstance(raw, dict):
-        items = [v for _, v in sorted([(int(k), v) for k, v in raw.items()], key=lambda x: x[0])]
-    elif isinstance(raw, list):
-        items = list(raw)
-    else:
-        items = []
+    try:
+        video, fname = rel_path.split("/", 1)
+        mapping = ALL_MAPS.get(video, {})
+        frame_idx = mapping.get(fname)
+        return (video, frame_idx)
+    except Exception as e:
+        print("Mapping error:", e)
+        return None
 
-    for rel in items:
-        rel = str(rel).replace("\\", "/")
-        parts = rel.split("/")
-        if len(parts) >= 2:
-            folder = parts[0]
-            fname  = parts[-1]
-            video  = f"{folder}.mp4"
-            digits = "".join(ch for ch in os.path.splitext(fname)[0] if ch.isdigit())
-            try:
-                fidx = int(digits)
-            except:
-                fidx = 0
-            _mapping[rel] = (video, fidx)
 
-def ensure_loaded():
-    global _loaded
-    if _loaded:
-        return
-    if os.path.isdir(config.MAP_CSV_DIR):
-        _load_from_csv_dir(config.MAP_CSV_DIR)
-    if not _mapping:
-        _fallback_build_from_filename()
-    _loaded = True
-
-def keyframe_to_video_frame(rel_path: str) -> Optional[Tuple[str, int]]:
-    """
-    rel_path: 'L21_V001/0000.jpg'
-    -> ('L21_V001.mp4', 0) nếu có map; None nếu không tìm thấy.
-    """
-    ensure_loaded()
-    rel = rel_path.replace("\\", "/").strip()
-    return _mapping.get(rel)
+# load khi import
+load_all_maps()
